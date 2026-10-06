@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>URL Paste Box</title>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        min-height: 100vh;
+        background: #0d1117;
+        color: #e6edf3;
+        font-family: Arial, Helvetica, sans-serif;
+
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .wrapper {
+        width: min(900px, 92%);
+    }
+
+    /* ---------------- HEADER ---------------- */
+
+    .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+
+    h1 {
+        margin: 0;
+        font-size: 26px;
+        font-weight: 700;
+    }
+
+    .count {
+        font-size: 15px;
+        color: #8b949e;
+    }
+
+    .count span {
+        color: #e6edf3;
+        font-weight: 700;
+    }
+
+    /* ---------------- URL CONTAINER ---------------- */
+
+    .paste-box {
+        width: 100%;
+        height: 390px;
+
+        padding: 15px 17px;
+
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 12px;
+
+        outline: none;
+
+        overflow-y: auto;
+        overflow-x: hidden;
+
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 15px;
+        line-height: 1.7;
+
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+
+        caret-color: #58a6ff;
+
+        scrollbar-width: thin;
+        scrollbar-color: #30363d #0d1117;
+    }
+
+    .paste-box:focus {
+        border-color: #58a6ff;
+        box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.12);
+    }
+
+    .paste-box::-webkit-scrollbar {
+        width: 9px;
+    }
+
+    .paste-box::-webkit-scrollbar-track {
+        background: #0d1117;
+        border-radius: 10px;
+    }
+
+    .paste-box::-webkit-scrollbar-thumb {
+        background: #30363d;
+        border-radius: 10px;
+    }
+
+    .paste-box::-webkit-scrollbar-thumb:hover {
+        background: #484f58;
+    }
+
+    /* ---------------- BUTTONS ---------------- */
+
+    .buttons {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+    }
+
+    button {
+        border: none;
+        border-radius: 8px;
+
+        padding: 8px 20px;
+
+        font-size: 14px;
+        font-weight: 600;
+
+        cursor: pointer;
+
+        transition:
+            background 0.15s ease,
+            transform 0.1s ease;
+    }
+
+    button:active {
+        transform: scale(0.97);
+    }
+
+    #copyButton {
+        background: #238636;
+        color: white;
+    }
+
+    #copyButton:hover {
+        background: #2ea043;
+    }
+
+    #clearButton {
+        background: #30363d;
+        color: #e6edf3;
+    }
+
+    #clearButton:hover {
+        background: #484f58;
+    }
+
+    /* ---------------- NOTIFICATION ---------------- */
+
+    .notification {
+        height: 24px;
+        margin-top: 5px;
+
+        font-size: 13px;
+        color: #8b949e;
+
+        display: flex;
+        align-items: center;
+
+        opacity: 0;
+
+        transition: opacity 0.15s ease;
+    }
+
+    .notification.show {
+        opacity: 1;
+    }
+</style>
+</head>
+
+
+<body>
+
+<div class="wrapper">
+
+    <!-- HEADER -->
+
+    <div class="header">
+
+        <h1>URL Paste Box</h1>
+
+        <div class="count">
+            Count : <span id="count">0</span>
+        </div>
+
+    </div>
+
+
+    <!-- URL INPUT -->
+
+    <div
+        id="pasteBox"
+        class="paste-box"
+        contenteditable="true"
+        spellcheck="false"
+    ></div>
+
+
+    <!-- BUTTONS -->
+
+    <div class="buttons">
+
+        <button id="copyButton">
+            Copy
+        </button>
+
+        <button id="clearButton">
+            Clear
+        </button>
+
+    </div>
+
+
+    <!-- ALL NOTIFICATIONS APPEAR HERE -->
+
+    <div
+        id="notification"
+        class="notification"
+    ></div>
+
+</div>
+
+
+<script>
+
+/* ==================================================
+   ELEMENTS
+   ================================================== */
+
+const pasteBox =
+    document.getElementById("pasteBox");
+
+const copyButton =
+    document.getElementById("copyButton");
+
+const clearButton =
+    document.getElementById("clearButton");
+
+const countDisplay =
+    document.getElementById("count");
+
+const notification =
+    document.getElementById("notification");
+
+
+/* ==================================================
+   HISTORY
+   ================================================== */
+
+let history = [""];
+let historyIndex = 0;
+
+let restoringHistory = false;
+
+
+/*
+    Save the current editor state.
+
+    Each paste is treated as one undo operation.
+*/
+function saveHistory() {
+
+    if (restoringHistory) {
+        return;
+    }
+
+    const current =
+        getEditorText();
+
+
+    /*
+        Don't save duplicates.
+    */
+    if (
+        historyIndex >= 0 &&
+        history[historyIndex] === current
+    ) {
+        return;
+    }
+
+
+    /*
+        If we are somewhere in the middle of history,
+        remove all redo states.
+    */
+    history =
+        history.slice(0, historyIndex + 1);
+
+
+    history.push(current);
+
+    historyIndex =
+        history.length - 1;
+
+
+    /*
+        Limit history size.
+    */
+    if (history.length > 100) {
+
+        history.shift();
+
+        historyIndex--;
+
+    }
+}
+
+
+/*
+    Restore a previous state.
+*/
+function restoreHistory(index) {
+
+    if (
+        index < 0 ||
+        index >= history.length
+    ) {
+        return;
+    }
+
+
+    restoringHistory = true;
+
+
+    const text = history[index];
+
+    pasteBox.innerHTML = "";
+
+
+    /*
+        Rebuild the editor using real <br> elements.
+    */
+    if (text.length > 0) {
+
+        const lines =
+            text.split("\n");
+
+        lines.forEach((line, index) => {
+
+            pasteBox.appendChild(
+                document.createTextNode(line)
+            );
+
+            if (index < lines.length - 1) {
+
+                pasteBox.appendChild(
+                    document.createElement("br")
+                );
+
+            }
+
+        });
+
+    }
+
+
+    historyIndex = index;
+
+    restoringHistory = false;
+
+
+    updateCount();
+
+    placeCursorOnNewLine();
+
+}
+
+
+/* ==================================================
+   GET EDITOR TEXT
+   ================================================== */
+
+function getEditorText() {
+
+    /*
+        innerText correctly converts <br>
+        into newline characters.
+    */
+    return pasteBox.innerText
+        .replace(/\u00a0/g, " ")
+        .replace(/\r/g, "");
+}
+
+
+/* ==================================================
+   CURSOR
+   ================================================== */
+
+/*
+    IMPORTANT:
+
+    This function creates an ACTUAL empty line
+    below the last URL and places the blinking
+    caret inside that empty line.
+
+    A normal "\n" inside contenteditable is not
+    reliable for this purpose.
+*/
+function placeCursorOnNewLine() {
+
+    pasteBox.focus();
+
+
+    /*
+        Remove any trailing <br> elements first.
+    */
+    while (
+        pasteBox.lastChild &&
+        pasteBox.lastChild.nodeName === "BR"
+    ) {
+
+        pasteBox.removeChild(
+            pasteBox.lastChild
+        );
+
+    }
+
+
+    /*
+        Add a real line break.
+    */
+    const br =
+        document.createElement("br");
+
+    pasteBox.appendChild(br);
+
+
+    /*
+        Add an empty text node AFTER the <br>.
+
+        This is the actual location of the caret.
+    */
+    const cursorNode =
+        document.createTextNode("");
+
+    pasteBox.appendChild(cursorNode);
+
+
+    /*
+        Create selection.
+    */
+    const range =
+        document.createRange();
+
+
+    range.setStart(
+        cursorNode,
+        0
+    );
+
+    range.collapse(true);
+
+
+    const selection =
+        window.getSelection();
+
+
+    selection.removeAllRanges();
+
+    selection.addRange(range);
+
+
+    /*
+        Scroll to the bottom.
+    */
+    pasteBox.scrollTop =
+        pasteBox.scrollHeight;
+}
+
+
+/* ==================================================
+   COUNT
+   ================================================== */
+
+function updateCount() {
+
+    const text =
+        getEditorText();
+
+
+    const lines =
+        text
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0);
+
+
+    countDisplay.textContent =
+        lines.length;
+}
+
+
+/* ==================================================
+   NOTIFICATIONS
+   ================================================== */
+
+let notificationTimer = null;
+
+
+function showNotification(message) {
+
+    clearTimeout(notificationTimer);
+
+
+    notification.textContent =
+        message;
+
+    notification.classList.add("show");
+
+
+    notificationTimer =
+        setTimeout(() => {
+
+            notification.classList.remove("show");
+
+            notification.textContent = "";
+
+        }, 1000);
+}
+
+
+/* ==================================================
+   PASTE
+   ================================================== */
+
+pasteBox.addEventListener(
+    "paste",
+    function(event) {
+
+        event.preventDefault();
+
+
+        const clipboardText =
+            event.clipboardData
+                .getData("text/plain");
+
+
+        if (!clipboardText.trim()) {
+            return;
+        }
+
+
+        /*
+            Extract every non-empty line.
+
+            Example:
+
+            URL 1
+            URL 2
+            URL 3
+
+            becomes three separate entries.
+        */
+        const urls =
+            clipboardText
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+
+
+        /*
+            Get existing URLs.
+        */
+        let existing =
+            getEditorText()
+                .trim();
+
+
+        /*
+            Remove the editor's empty cursor line
+            from the text representation.
+        */
+        let newText = existing;
+
+
+        if (newText.length > 0) {
+
+            newText += "\n";
+
+        }
+
+
+        newText +=
+            urls.join("\n");
+
+
+        /*
+            Rebuild the editor completely.
+
+            This gives us precise control over the
+            line breaks and caret position.
+        */
+        pasteBox.innerHTML = "";
+
+
+        const lines =
+            newText.split("\n");
+
+
+        lines.forEach((line, index) => {
+
+            pasteBox.appendChild(
+                document.createTextNode(line)
+            );
+
+
+            if (index < lines.length - 1) {
+
+                pasteBox.appendChild(
+                    document.createElement("br")
+                );
+
+            }
+
+        });
+
+
+        /*
+            Save the complete paste as ONE undo step.
+        */
+        saveHistory();
+
+
+        /*
+            Update count.
+        */
+        updateCount();
+
+
+        /*
+            Put the blinking cursor on the
+            next empty line.
+        */
+        placeCursorOnNewLine();
+
+    }
+);
+
+
+/* ==================================================
+   NORMAL TYPING
+   ================================================== */
+
+pasteBox.addEventListener(
+    "input",
+    function() {
+
+        updateCount();
+
+        saveHistory();
+
+        /*
+            Keep newest content visible.
+        */
+        pasteBox.scrollTop =
+            pasteBox.scrollHeight;
+
+    }
+);
+
+
+/* ==================================================
+   KEYBOARD SHORTCUTS
+   ================================================== */
+
+pasteBox.addEventListener(
+    "keydown",
+    function(event) {
+
+
+        /*
+            CTRL + Z
+        */
+        if (
+            event.ctrlKey &&
+            !event.shiftKey &&
+            event.key.toLowerCase() === "z"
+        ) {
+
+            event.preventDefault();
+
+
+            if (historyIndex > 0) {
+
+                restoreHistory(
+                    historyIndex - 1
+                );
+
+            }
+
+            return;
+        }
+
+
+        /*
+            CTRL + SHIFT + Z
+
+            REDO
+        */
+        if (
+            event.ctrlKey &&
+            event.shiftKey &&
+            event.key.toLowerCase() === "z"
+        ) {
+
+            event.preventDefault();
+
+
+            if (
+                historyIndex <
+                history.length - 1
+            ) {
+
+                restoreHistory(
+                    historyIndex + 1
+                );
+
+            }
+
+            return;
+        }
+
+
+        /*
+            ENTER
+
+            Keep the editor at the bottom.
+        */
+        if (event.key === "Enter") {
+
+            setTimeout(() => {
+
+                pasteBox.scrollTop =
+                    pasteBox.scrollHeight;
+
+            }, 0);
+
+        }
+
+    }
+);
+
+
+/* ==================================================
+   COPY
+   ================================================== */
+
+copyButton.addEventListener(
+    "click",
+    async function() {
+
+        /*
+            Don't copy the empty cursor line.
+        */
+        const text =
+            getEditorText().trim();
+
+
+        if (!text) {
+
+            showNotification(
+                "Nothing to copy"
+            );
+
+            return;
+        }
+
+
+        /*
+            Prepare text only for copying.
+
+            The editor keeps the original URL unchanged.
+            Only Instagram URLs have their query string/hash removed.
+            All other URLs are copied exactly as entered.
+        */
+        function prepareTextForCopy(input) {
+
+            return input
+                .split(/\r?\n/)
+                .map(line => {
+
+                    const trimmed = line.trim();
+
+                    try {
+
+                        const url = new URL(trimmed);
+
+                        if (
+                            url.hostname === "instagram.com" ||
+                            url.hostname.endsWith(".instagram.com")
+                        ) {
+
+                            url.search = "";
+                            url.hash = "";
+
+                            return url.toString();
+                        }
+
+                    } catch (error) {
+                        /*
+                            Not a URL — leave the line unchanged.
+                        */
+                    }
+
+                    return line;
+                })
+                .join("\n");
+        }
+
+        const textToCopy =
+            prepareTextForCopy(text);
+
+        try {
+
+            await navigator.clipboard
+                .writeText(textToCopy);
+
+
+            showNotification("Copied");
+
+        }
+
+        catch (error) {
+
+            /*
+                Clipboard fallback.
+            */
+            const textarea =
+                document.createElement(
+                    "textarea"
+                );
+
+
+            textarea.value = textToCopy;
+
+            textarea.style.position =
+                "fixed";
+
+            textarea.style.opacity =
+                "0";
+
+
+            document.body.appendChild(
+                textarea
+            );
+
+
+            textarea.select();
+
+
+            document.execCommand(
+                "copy"
+            );
+
+
+            textarea.remove();
+
+
+            showNotification("Copied");
+
+        }
+
+    }
+);
+
+
+/* ==================================================
+   CLEAR
+   ================================================== */
+
+clearButton.addEventListener(
+    "click",
+    function() {
+
+        const current =
+            getEditorText().trim();
+
+
+        if (!current) {
+
+            showNotification(
+                "Already empty"
+            );
+
+            return;
+        }
+
+
+        /*
+            Clear the editor.
+        */
+        pasteBox.innerHTML = "";
+
+
+        /*
+            Save clear as an undo state.
+
+            Therefore:
+
+            Clear
+              ↓
+            Ctrl + Z
+              ↓
+            URLs return
+        */
+        saveHistory();
+
+
+        updateCount();
+
+
+        /*
+            Put the cursor inside the empty editor.
+        */
+        pasteBox.focus();
+
+
+        const range =
+            document.createRange();
+
+        range.selectNodeContents(
+            pasteBox
+        );
+
+        range.collapse(true);
+
+
+        const selection =
+            window.getSelection();
+
+        selection.removeAllRanges();
+
+        selection.addRange(range);
+
+
+        showNotification(
+            "Cleared"
+        );
+
+    }
+);
+
+
+/* ==================================================
+   INITIAL STATE
+   ================================================== */
+
+updateCount();
+
+pasteBox.focus();
+
+</script>
+
+</body>
+</html>
